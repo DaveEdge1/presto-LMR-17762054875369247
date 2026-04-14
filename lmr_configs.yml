@@ -1,6 +1,6 @@
 recon_period:
-  - 850
-  - 2020
+  - 1600
+  - 2010
 recon_seeds:
   - 1
 prior_annualize_months:
