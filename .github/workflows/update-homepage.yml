@@ -1,0 +1,24 @@
+name: Update Repository Homepage
+
+on:
+  workflow_run:
+    workflows: ["Visualize Latest CFR Results"]
+    types: [completed]
+
+jobs:
+  update-homepage:
+    name: Set Pages URL in repo About
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    permissions:
+      administration: write
+    steps:
+      - name: Update repository homepage
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PAGE_URL="https://$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]').github.io/$(echo '${{ github.event.repository.name }}')/docs/visualizer.html"
+          echo "Setting homepage to: $PAGE_URL"
+          gh api --method PATCH "repos/${{ github.repository }}" \
+            --field homepage="$PAGE_URL"
+          echo "Done."
