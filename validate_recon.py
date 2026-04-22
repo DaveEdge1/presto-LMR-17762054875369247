@@ -129,25 +129,13 @@ def fetch_hadcrut5_gmst():
 # Proxy comparison functions
 # ═══════════════════════════════════════════════════════════════════════════
 
-# Standard paleoclimate archive-type colors
+# Standard paleoclimate archive-type colors (keyed by normalized display name)
 ARCHIVE_COLORS = {
-    'tree': '#228B22', 'coral': '#FF6347', 'ice': '#4169E1',
-    'lake': '#8B4513', 'marine': '#006400', 'speleothem': '#9370DB',
-    'borehole': '#FF8C00', 'documents': '#808080', 'bivalve': '#DEB887',
-    'sclerosponge': '#20B2AA', 'hybrid': '#C0C0C0',
-    'LakeSediment': '#8B4513', 'MarineSediment': '#006400',
-    'GlacierIce': '#4169E1', 'Speleothem': '#9370DB',
-    'Borehole': '#FF8C00', 'Coral': '#FF6347', 'Wood': '#228B22',
-    'Sclerosponge': '#20B2AA', 'Bivalve': '#DEB887',
-    'Document': '#808080', 'MolluskShell': '#DEB887',
+    'Tree': '#228B22', 'Coral': '#FF6347', 'Ice': '#4169E1',
+    'Lake': '#8B4513', 'Marine': '#006400', 'Speleothem': '#9370DB',
+    'Borehole': '#FF8C00', 'Documents': '#808080', 'Bivalve': '#DEB887',
+    'Sclerosponge': '#20B2AA', 'Hybrid': '#C0C0C0', 'Other': '#999999',
 }
-
-
-def archive_from_ptype(ptype):
-    """Extract archive type from ptype string (e.g. 'tree.TRW' → 'tree')."""
-    if not ptype:
-        return 'unknown'
-    return ptype.split('.')[0] if '.' in ptype else ptype
 
 
 def plot_temporal_coverage(rows, out_path):
@@ -157,7 +145,7 @@ def plot_temporal_coverage(rows, out_path):
         try:
             t0 = float(r['time_start'])
             t1 = float(r['time_end'])
-            archive = archive_from_ptype(r.get('ptype', ''))
+            archive = r.get('archiveType', 'Other')
             source = r.get('source', '')
             records.append((t0, t1, archive, source))
         except (ValueError, TypeError):
@@ -209,7 +197,7 @@ def build_comparison_table(rows):
     from collections import Counter
     type_source = Counter()
     for r in rows:
-        archive = archive_from_ptype(r.get('ptype', ''))
+        archive = r.get('archiveType', 'Other')
         source = r.get('source', 'unknown')
         type_source[(archive, source)] += 1
 

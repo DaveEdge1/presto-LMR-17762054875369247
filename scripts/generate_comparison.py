@@ -23,6 +23,36 @@ import numpy as np
 
 LIPDVERSE_QUERY_URL = 'https://lipdverse.org/lipdverse/lipdverseQuery.zip'
 
+# Normalize archive type names from both cfr ptype prefixes and LiPD archiveType
+# values to consistent display names.
+ARCHIVE_NORMALIZE = {
+    # cfr ptype prefixes (lowercase)
+    'tree': 'Tree', 'coral': 'Coral', 'ice': 'Ice', 'lake': 'Lake',
+    'marine': 'Marine', 'speleothem': 'Speleothem',
+    'sclerosponge': 'Sclerosponge', 'borehole': 'Borehole',
+    'documents': 'Documents', 'bivalve': 'Bivalve', 'hybrid': 'Hybrid',
+    # LiPD archiveType values (CamelCase)
+    'Wood': 'Tree', 'GlacierIce': 'Ice', 'GroundIce': 'Ice',
+    'LakeSediment': 'Lake', 'MarineSediment': 'Marine',
+    'TerrestrialSediment': 'Lake', 'MolluskShell': 'Bivalve',
+    'Document': 'Documents', 'Other': 'Other',
+    # Already-normalized (pass through)
+    'Tree': 'Tree', 'Coral': 'Coral', 'Ice': 'Ice', 'Lake': 'Lake',
+    'Marine': 'Marine', 'Speleothem': 'Speleothem',
+    'Sclerosponge': 'Sclerosponge', 'Borehole': 'Borehole',
+    'Documents': 'Documents', 'Bivalve': 'Bivalve', 'Hybrid': 'Hybrid',
+}
+
+
+def normalize_archive(ptype):
+    """Extract and normalize archive type from a ptype string.
+    e.g. 'coral.d18O' → 'Coral', 'GlacierIce' → 'Ice', 'tree.TRW' → 'Tree'
+    """
+    if not ptype:
+        return 'Other'
+    prefix = ptype.split('.')[0] if '.' in ptype else ptype
+    return ARCHIVE_NORMALIZE.get(prefix, prefix.title())
+
 
 class GenericUnpickler(pickle.Unpickler):
     """Unpickle cfr objects without needing the cfr package installed."""
@@ -251,6 +281,7 @@ def main(presto2k_path, query_params_path, cleaning_report_path, output_path):
         rows.append({
             'TSID': tsid, 'record_id': pid, 'source': source,
             'dataSetName': dsname, 'ptype': info['ptype'],
+            'archiveType': normalize_archive(info['ptype']),
             'lat': info['lat'], 'lon': info['lon'], 'elev': info['elev'],
             'seasonality': info['seasonality'],
             'time_start': info['time_start'], 'time_end': info['time_end'],
@@ -266,6 +297,7 @@ def main(presto2k_path, query_params_path, cleaning_report_path, output_path):
         rows.append({
             'TSID': tsid, 'record_id': dsname or tsid, 'source': 'custom_run',
             'dataSetName': dsname, 'ptype': info['ptype'],
+            'archiveType': normalize_archive(info['ptype']),
             'lat': info['lat'], 'lon': info['lon'], 'elev': info['elev'],
             'seasonality': info['seasonality'],
             'time_start': info['time_start'], 'time_end': info['time_end'],
@@ -273,9 +305,9 @@ def main(presto2k_path, query_params_path, cleaning_report_path, output_path):
         })
 
     # ── Write CSV ──
-    fields = ['TSID', 'record_id', 'source', 'dataSetName', 'ptype', 'lat',
-              'lon', 'elev', 'seasonality', 'time_start', 'time_end', 'n_obs',
-              'compilation']
+    fields = ['TSID', 'record_id', 'source', 'dataSetName', 'ptype',
+              'archiveType', 'lat', 'lon', 'elev', 'seasonality',
+              'time_start', 'time_end', 'n_obs', 'compilation']
 
     os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
     with open(output_path, 'w', newline='', encoding='utf-8') as f:
