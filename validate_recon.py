@@ -34,6 +34,7 @@ LMR_V21_PATH = os.environ.get(
 VALID_START  = 1880
 VALID_END    = 2000
 ANOM_PERIOD  = [1951, 1980]
+COMPARISON_CSV = os.environ.get('COMPARISON_CSV', '/app/proxy_db_comparison.csv')
 
 os.makedirs(OUT_DIR, exist_ok=True)
 
@@ -122,6 +123,119 @@ def fetch_hadcrut5_gmst():
         except (ValueError, IndexError):
             continue
     return np.array(years), np.array(vals)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Proxy comparison functions
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Standard paleoclimate archive-type colors
+ARCHIVE_COLORS = {
+    'tree': '#228B22', 'coral': '#FF6347', 'ice': '#4169E1',
+    'lake': '#8B4513', 'marine': '#006400', 'speleothem': '#9370DB',
+    'borehole': '#FF8C00', 'documents': '#808080', 'bivalve': '#DEB887',
+    'sclerosponge': '#20B2AA', 'hybrid': '#C0C0C0',
+    'LakeSediment': '#8B4513', 'MarineSediment': '#006400',
+    'GlacierIce': '#4169E1', 'Speleothem': '#9370DB',
+    'Borehole': '#FF8C00', 'Coral': '#FF6347', 'Wood': '#228B22',
+    'Sclerosponge': '#20B2AA', 'Bivalve': '#DEB887',
+    'Document': '#808080', 'MolluskShell': '#DEB887',
+}
+
+
+def archive_from_ptype(ptype):
+    """Extract archive type from ptype string (e.g. 'tree.TRW' → 'tree')."""
+    if not ptype:
+        return 'unknown'
+    return ptype.split('.')[0] if '.' in ptype else ptype
+
+
+def plot_temporal_coverage(rows, out_path):
+    """Stacked bar chart of proxy record temporal coverage by archive type."""
+    records = []
+    for r in rows:
+        try:
+            t0 = float(r['time_start'])
+            t1 = float(r['time_end'])
+            archive = archive_from_ptype(r.get('ptype', ''))
+            source = r.get('source', '')
+            records.append((t0, t1, archive, source))
+        except (ValueError, TypeError):
+            continue
+    if not records:
+        return False
+
+    # Determine range, clip outliers
+    starts = [r[0] for r in records]
+    ends = [r[1] for r in records]
+    lo = max(0, np.percentile(starts, 5))
+    hi = min(2100, np.percentile(ends, 95))
+    if hi <= lo:
+        lo, hi = min(starts), max(ends)
+
+    n_bins = 80
+    bin_edges = np.linspace(lo, hi, n_bins + 1)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    bin_width = bin_edges[1] - bin_edges[0]
+
+    archive_types = sorted(set(r[2] for r in records))
+
+    counts = {at: np.zeros(n_bins) for at in archive_types}
+    for t0, t1, archive, _ in records:
+        for i in range(n_bins):
+            if t0 <= bin_edges[i + 1] and t1 >= bin_edges[i]:
+                counts[archive][i] += 1
+
+    fig, ax = plt.subplots(figsize=(14, 5))
+    bottom = np.zeros(n_bins)
+    for at in archive_types:
+        color = ARCHIVE_COLORS.get(at, '#999999')
+        ax.bar(bin_centers, counts[at], width=bin_width * 0.95, bottom=bottom,
+               label=at, color=color, edgecolor='none')
+        bottom += counts[at]
+
+    ax.set_xlabel('Year CE')
+    ax.set_ylabel('Number of Records')
+    ax.set_title('Temporal Coverage of Proxy Records by Archive Type')
+    ax.legend(loc='upper left', fontsize=8, ncol=2)
+    ax.set_xlim(lo, hi)
+    fig.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    return True
+
+
+def build_comparison_table(rows):
+    """Build HTML table summarizing records by archive type and source."""
+    from collections import Counter
+    type_source = Counter()
+    for r in rows:
+        archive = archive_from_ptype(r.get('ptype', ''))
+        source = r.get('source', 'unknown')
+        type_source[(archive, source)] += 1
+
+    archives = sorted(set(a for a, _ in type_source.keys()))
+
+    html = '<table>\n'
+    html += '    <tr><th>Archive Type</th><th>Shared</th>'
+    html += '<th>PReSto2k Only</th><th>Custom Only</th><th>Total</th></tr>\n'
+
+    totals = {'both': 0, 'presto2k': 0, 'custom_run': 0}
+    for arch in archives:
+        b = type_source.get((arch, 'both'), 0)
+        p = type_source.get((arch, 'presto2k'), 0)
+        c = type_source.get((arch, 'custom_run'), 0)
+        totals['both'] += b
+        totals['presto2k'] += p
+        totals['custom_run'] += c
+        html += f'    <tr><td>{arch}</td><td>{b}</td><td>{p}</td>'
+        html += f'<td>{c}</td><td>{b + p + c}</td></tr>\n'
+
+    grand = sum(totals.values())
+    html += f'    <tr style="font-weight:bold"><td>Total</td>'
+    html += f'<td>{totals["both"]}</td><td>{totals["presto2k"]}</td>'
+    html += f'<td>{totals["custom_run"]}</td><td>{grand}</td></tr>\n'
+    html += '  </table>\n'
+    return html, totals
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -571,7 +685,77 @@ with open(os.path.join(OUT_DIR, 'validation_metrics.json'), 'w') as f:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 10. Generate HTML report
+# 10. Load proxy comparison data and generate comparison plots
+# ═══════════════════════════════════════════════════════════════════════════
+comparison_rows = []
+has_comparison = False
+comparison_html = ''
+
+if os.path.exists(COMPARISON_CSV):
+    print(f'Loading proxy comparison from {COMPARISON_CSV} ...')
+    with open(COMPARISON_CSV, encoding='utf-8') as f:
+        comparison_rows = list(csv.DictReader(f))
+    has_comparison = len(comparison_rows) > 0
+    print(f'  {len(comparison_rows)} proxy comparison records loaded')
+
+if has_comparison:
+    # Generate temporal coverage plot
+    coverage_ok = plot_temporal_coverage(
+        comparison_rows, os.path.join(OUT_DIR, 'temporal_coverage.png'))
+    if coverage_ok:
+        print('  temporal_coverage.png saved')
+
+    # Build summary table
+    archive_table_html, comp_totals = build_comparison_table(comparison_rows)
+    n_both = comp_totals['both']
+    n_presto2k_only = comp_totals['presto2k']
+    n_custom_only = comp_totals['custom_run']
+    n_total = n_both + n_presto2k_only + n_custom_only
+
+    comparison_html = f"""
+  <h2>Proxy Database Comparison</h2>
+  <p>Comparison of proxy records between the reference
+     <strong>PReSto2k</strong> database and the
+     <strong>custom run</strong> proxy selection, matched by TSID.
+     Records in &ldquo;Shared&rdquo; appear in both databases.</p>
+
+  <div class="metric-grid">
+    <div class="metric-card">
+      <div class="value">{n_both}</div>
+      <div class="label">Shared Records</div>
+    </div>
+    <div class="metric-card">
+      <div class="value">{n_presto2k_only}</div>
+      <div class="label">PReSto2k Only</div>
+    </div>
+    <div class="metric-card">
+      <div class="value">{n_custom_only}</div>
+      <div class="label">Custom Run Only</div>
+    </div>
+    <div class="metric-card">
+      <div class="value">{n_total}</div>
+      <div class="label">Total Unique Records</div>
+    </div>
+  </div>
+
+  <h3>Records by Archive Type</h3>
+  {archive_table_html}
+"""
+    if coverage_ok:
+        comparison_html += """
+  <h3>Temporal Coverage</h3>
+  <p>Stacked bar chart showing the number of proxy records covering each
+     time period, colored by archive type. Includes all records from both
+     databases.</p>
+  <img src="temporal_coverage.png" alt="Temporal coverage of proxy records">
+"""
+    print('  Comparison HTML section built')
+else:
+    print('No proxy comparison CSV found — skipping comparison section')
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 11. Generate HTML report
 # ═══════════════════════════════════════════════════════════════════════════
 print('Generating HTML report ...')
 
@@ -740,6 +924,8 @@ html = f"""<!DOCTYPE html>
   {'<p>Year-by-year difference between the custom reconstruction and LMRv2.1 ensemble medians. Red = warmer, Blue = cooler.</p>' if has_diff_plot else ''}
   {'<img src="gmst_difference.png" alt="GMST difference plot">' if has_diff_plot else ''}
 
+  {comparison_html}
+
   <p class="back"><a href="../index.html">&larr; Back to results</a></p>
 </body>
 </html>"""
@@ -752,5 +938,7 @@ print(f'  Plots: spatial_corr_map.png, spatial_ce_map.png, '
       f'spatial_corr_ce_combined.png')
 print(f'  Plots: gmst_timeseries.png, gmst_instrumental_detail.png'
       f'{", gmst_difference.png" if has_diff_plot else ""}')
+if has_comparison:
+    print(f'  Plots: temporal_coverage.png')
 print(f'  Data:  validation_metrics.csv, validation_metrics.json')
 print(f'  HTML:  index.html')
